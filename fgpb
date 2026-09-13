@@ -158,12 +158,14 @@ foreach my $interval (@$interval_arr) {
 	my $node_add_sample;
 	my $edge_out;
 	my $ref_info;
+	my $dup_map;
 	my $start0 = $start > 0 ? $start - 1 : 0;
 	if ($has_vcf_mode){
 		printLog("- Extracting subgraph with ODGI...");
 		GPBgraph::extract_subgraph($graph, $chr, "$chr:$start0-$end", $dir_name, $graph_dir, $interval->[0], $maxd, $maxe, $threads);
 		printLog("- Performing hierarchical layout of the sequence graph and computing coordinates...");
 		($node_add_sample, $edge_out, $ref_info) = GPBgfa::parse_variant_gfa("$dir_name/$graph_dir/$name.gfa", "$dir_name/variant_samples.txt", "$dir_name/pan.vcf");
+		$dup_map = {};
 	} elsif ($has_graph_mode) {
 		if ($geneid || $genelist || $region || $regionlist) {
 			printLog("- Extracting subgraph with ODGI...");
@@ -174,7 +176,7 @@ foreach my $interval (@$interval_arr) {
 		}
 		printLog("- Performing hierarchical layout of the sequence graph and computing coordinates...");
 		print "$ref_path_name\n";
-		($node_add_sample, $edge_out, $ref_info) = GPBgfa::parse_graph_gfa("$dir_name/$graph_dir/$name.gfa", $ref_path_name);
+		($node_add_sample, $edge_out, $ref_info, $dup_map) = GPBgfa::parse_graph_gfa("$dir_name/$graph_dir/$name.gfa", $ref_path_name);
 	}
 	if (grep { @$_[2] <= 0 } @$edge_out) {
     		warn "Warning: Complex mutation from overlapping variants in '$name' region exceeds current handling capability.\n";
@@ -210,7 +212,7 @@ foreach my $interval (@$interval_arr) {
 	}
 
 	printLog("- Generating final visualization...");
-	GPBreport::export_figure("${dir_name}/visualization", $interval->[0], $final_nodes, $edge_out, $ref_info, $all_gene_pos, $bed_data, $pheno_meta);
+	GPBreport::export_figure("${dir_name}/visualization", $interval->[0], $final_nodes, $edge_out, $ref_info, $all_gene_pos, $bed_data, $pheno_meta, $dup_map);
 	
 }
 

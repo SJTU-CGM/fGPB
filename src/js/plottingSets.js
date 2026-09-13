@@ -66,7 +66,7 @@ function getGraphSeries(nodeXPos, groupedEdge, blockNode, blockColors) {
 }
 
 
-function getGraphNodeSeries(nodeXPos, blockNode, blockColors, blockWidth) {
+function getGraphNodeSeries(nodeXPos, blockNode, blockColors, blockWidth, dupMap) {
 
   const graphDataList = [];
   const graphNodePos = {};
@@ -82,13 +82,22 @@ function getGraphNodeSeries(nodeXPos, blockNode, blockColors, blockWidth) {
         [nodeXPos[key].xstart + curW / 2, 0 + blockHeight / 2],
         [nodeXPos[key].xend - curW / 2, 0 + blockHeight / 2],
         [nodeXPos[key].xend - curW / 2, 0 - blockHeight / 2],
-        blockColors[blockNode.indexOf(key)]
+        blockColors[blockNode.indexOf(key)],
+        key
       ]);
       graphNodePos[key] = {
         xstart: nodeXPos[key].xstart + curW / 2,
         xend: nodeXPos[key].xend - curW / 2
       }
     }
+  });
+
+  const gKeys = Object.keys(graphNodePos).sort((a, b) => graphNodePos[a].xstart - graphNodePos[b].xstart);
+  graphDataList.forEach(entry => {
+    const i = gKeys.indexOf(entry[5]);
+    const gapB = i > 0 ? graphNodePos[entry[5]].xstart - graphNodePos[gKeys[i - 1]].xend : Infinity;
+    const gapA = i < gKeys.length - 1 ? graphNodePos[gKeys[i + 1]].xstart - graphNodePos[entry[5]].xend : Infinity;
+    entry.push(gapB, gapA);
   });
 
   const seriesGraphNodeList = graphDataList.map(data => {
@@ -100,18 +109,71 @@ function getGraphNodeSeries(nodeXPos, blockNode, blockColors, blockWidth) {
         }
         params.context.rendered = true;
         let points = [];
-        for (let i = 0; i < data.length; i++) {
+        for (let i = 0; i < 4; i++) {
           points.push(api.coord(data[i]));
         }
-        return {
+        const x0 = points[0][0], x1 = points[2][0];
+        const y0 = Math.min(points[0][1], points[2][1]);
+        const y1 = Math.max(points[0][1], points[2][1]);
+        const w = x1 - x0, h = y1 - y0;
+        const cy = y0 + h / 2;
+        const pxPerUnit = api.coord([1, 0])[0] - api.coord([0, 0])[0];
+        const gapPx = (data[5].endsWith('-') ? data[6] : data[7]) * pxPerUnit;
+        const ext = Math.min(h * 0.8, 6, gapPx);
+        const ts = Math.min(h * 0.8, w * 0.3, 8);
+        let shapePoints;
+        if (w < 4) {
+          shapePoints = points;
+        } else if (data[5].endsWith('-')) {
+          shapePoints = ext >= 1.5 ?
+            [[x1, y0], [x1, y1], [x0, y1], [x0 - ext, cy], [x0, y0]] :
+            [[x1, y0], [x1, y1], [x0 + ts, y1], [x0, cy], [x0 + ts, y0]];
+        } else {
+          shapePoints = ext >= 1.5 ?
+            [[x0, y0], [x0, y1], [x1, y1], [x1 + ext, cy], [x1, y0]] :
+            [[x0, y0], [x0, y1], [x1 - ts, y1], [x1, cy], [x1 - ts, y0]];
+        }
+        const children = [{
           type: 'polygon',
           transition: ['shape'],
           shape: {
-            points: points
+            points: shapePoints
           },
           style: {
             fill: data[4]
           }
+        }];
+        if (data[5].endsWith('-') || (dupMap && (dupMap[data[5]] || data[5].split(',').some(p => dupMap[p])))) {
+          const dots = [];
+          for (let yy = y0 + 2; yy < y1; yy += 4) {
+            for (let xx = x0 + 2; xx < x1; xx += 4) {
+              dots.push({
+                type: 'circle',
+                shape: {
+                  cx: xx,
+                  cy: yy,
+                  r: 0.8
+                },
+                style: {
+                  fill: 'rgba(0,0,0,0.35)'
+                }
+              });
+            }
+          }
+          children.push({
+            type: 'group',
+            children: dots,
+            clipPath: {
+              type: 'polygon',
+              shape: {
+                points: shapePoints
+              }
+            }
+          });
+        }
+        return {
+          type: 'group',
+          children: children
         };
       },
       xAxisIndex: 0,
@@ -451,7 +513,7 @@ function getDisPhenTrackSeries(phenData, phenGroupName, nodeXPos, axisIdx, block
 }
 
 
-function getBlockSeries(nodeXPos, nodeYRange, blockArrow, sortedNodes, nodeSampleN, arrowWidth, refNodes, refNodeColors, altNodePalette) {
+function getBlockSeries(nodeXPos, nodeYRange, blockArrow, sortedNodes, nodeSampleN, arrowWidth, refNodes, refNodeColors, altNodePalette, dupMap) {
 
   const blockDataList = [];
   const blockColors = [];
@@ -586,7 +648,9 @@ function getBlockSeries(nodeXPos, nodeYRange, blockArrow, sortedNodes, nodeSampl
         trigger: "item",
         formatter: function (params) {
           curVal = params.value
-          return '<b>Node ' + blockNode[idx] + '</b>';
+          const bn = blockNode[idx];
+          const dupNote = (dupMap && dupMap[bn]) ? ' <span style="color:#999">(duplicated from node ' + dupMap[bn] + ')</span>' : '';
+          return '<b>Node ' + bn + '</b>' + dupNote;
         }
       }
     }
@@ -1284,13 +1348,15 @@ function getChartOption(axisPointerColor, xMin, xMax, newXLabel, yMax, strucYtex
 }
 
 
-function fillNodePanel(curNode, nodeSeq, nodeSample, refInfo) {
+function fillNodePanel(curNode, nodeSeq, nodeSample, refInfo, dupMap) {
 	const fileName = refInfo.chr + '_' + refInfo.start + '-' + refInfo.end
 	
   const seq = nodeSeq.get(curNode) || '';
+  const dupNote = (dupMap && dupMap[curNode]) ? ` (duplicated from node ${dupMap[curNode]})` : '';
+  const revNote = curNode.endsWith('-') ? ` (reverse complement of ${curNode.split(',').map(s => s.slice(0, -1) + '+').reverse().join(',')})` : '';
   document.getElementById("nodePanelSeq").innerHTML =
     `<br><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
-      <div style="white-space:pre-wrap;word-break:break-all;font-weight:bold;">Sequence of node ${curNode}:</div>
+      <div style="white-space:pre-wrap;word-break:break-all;font-weight:bold;">Sequence of node ${curNode}${dupNote}${revNote}:</div>
       <button class="btn btn-sm btn-success" onclick="downloadFasta('${curNode}', \`${seq.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\n/g, '\\n')}\`, '${fileName}')" style="font-size:12px;padding:2px 10px;">
         <span style="margin-right:4px;">⬇</span>Download FASTA
       </button>

@@ -44,7 +44,7 @@ sub compress_dna {
 
 
 sub export_figure {
-	my ($dir, $pfx, $final_nodes, $edge_out, $ref_info, $all_gene_pos, $bed_data, $pheno_meta) = @_;
+	my ($dir, $pfx, $final_nodes, $edge_out, $ref_info, $all_gene_pos, $bed_data, $pheno_meta, $dup_map) = @_;
 
 	my %all_sample;
 	$all_sample{$_} = 1 for map { split /,/, $_->[2] } @$final_nodes;
@@ -76,6 +76,7 @@ sub export_figure {
                         ref => $ref_info
                 },
 		sampleList => join(',', @sample_list),
+		dupMap => $dup_map,
                 geneAnnoData => $all_gene_pos,
                 bedAnnoData => $bed_data,
                 phenoMeta => $pheno_meta
@@ -200,6 +201,7 @@ $(document).ready(function () {
     const geneData = data.geneAnnoData;
     const bedData = data.bedAnnoData;
     const phenoMetaData = data.phenoMeta;
+    const dupMap = data.dupMap || {};
     const nodeData = getNodeData(graphData.node, data.sampleList);
 
     var strucColors = {
@@ -294,14 +296,14 @@ $(document).ready(function () {
         seriesBlockList,
         blockNode: bn,
         blockColors
-      } = getBlockSeries(nodeXPos, nodeYRange, blockArrow, sortedNodes, nodeSampleN, arrowWidth, refNodes, refNodeColors, altNodePalette);
+      } = getBlockSeries(nodeXPos, nodeYRange, blockArrow, sortedNodes, nodeSampleN, arrowWidth, refNodes, refNodeColors, altNodePalette, dupMap);
       blockNode = bn;
       const seriesLineList = getLineSeries(lineData, arrowWidth, arrowColor);
 
       const {
         graphNodePos,
         seriesGraphNodeList
-      } = getGraphNodeSeries(nodeXPos, blockNode, blockColors, 0.9);
+      } = getGraphNodeSeries(nodeXPos, blockNode, blockColors, 0.9, dupMap);
       const seriesGraphEdgeList = getGraphEdgeSeries(graphNodePos, groupedEdge);
 
       const seriesGeneStruc = getStrucSeries(strucSplitedData, refAreaColor, refMarkedArea);
@@ -358,7 +360,7 @@ $(document).ready(function () {
         if (curNode) {
           document.getElementById("nodePanelText").hidden = true;
           document.getElementById("nodePanel").hidden = false;
-          fillNodePanel(curNode, nodeSeq, nodeSample, refInfo);
+          fillNodePanel(curNode, nodeSeq, nodeSample, refInfo, dupMap);
         }
       }
     });

@@ -14,6 +14,9 @@ sub parse_graph_gfa {
         my %edge_pair;
         my %ref_info;
 	my @node_inv;
+	my %node_seq;
+	my %dup_map;
+	my $max_id = 0;
 
 	push(@nodes, ["0+", ""]);
 	push(@nodes, ["Inf+", ""]);
@@ -25,8 +28,24 @@ sub parse_graph_gfa {
                 my $class = $arr[0];
                 if($class eq "S"){
 			push(@nodes, [$arr[1]."+", $arr[2]]);
+			$node_seq{$arr[1]} = $arr[2];
+			$max_id = $arr[1] if $arr[1] =~ /^\d+$/ && $arr[1] > $max_id;
                 }elsif($class eq "P" && !($arr[1] =~ /_MINIGRAPH_/)){
                         my @cur_nodes = split(/,/, $arr[2]);
+                        my %seen_in_path;
+                        for(my $i = 0; $i < @cur_nodes; $i++){
+                                my $cur = $cur_nodes[$i];
+                                next unless $seen_in_path{$cur}++;
+                                my ($base, $orient) = $cur =~ /^(.+?)([+-])$/ ? ($1, $2) : ($cur, '+');
+                                $max_id++;
+                                $max_id++ while exists $node_seq{$max_id};
+                                my $new_node = $max_id . $orient;
+                                $node_seq{$max_id} = $node_seq{$base} // '';
+                                push(@nodes, [$max_id."+", $node_seq{$max_id}]);
+                                $dup_map{$new_node} = $cur;
+                                $cur_nodes[$i] = $new_node;
+                        }
+                        $arr[2] = join(",", @cur_nodes);
                         unshift(@cur_nodes, "0+");
 			push(@cur_nodes, "Inf+");
                         for(my $i = 0; $i < @cur_nodes - 1; $i++){
@@ -83,12 +102,49 @@ sub parse_graph_gfa {
                 push @edge_out, [$start, $end, $edge_pair{$key}];
         }
 
+	my @cycle_nodes = detect_cycle_nodes(\@edge_out);
+	if(@cycle_nodes){
+		warn "Warning: nodes [".join(", ", @cycle_nodes)."] remain in a cycle that cannot be resolved by path-based duplication. The layout of this region may fail; please check the input graph.\n";
+	}
+
 	my @node_add_sample;
         foreach my $node (@nodes){
 		push(@node_add_sample, [@$node[0], @$node[1], $node_sample{@$node[0]} // '']);
         }
 
-	return (\@node_add_sample, \@edge_out, \%ref_info);
+	return (\@node_add_sample, \@edge_out, \%ref_info, \%dup_map);
+
+}
+
+
+sub detect_cycle_nodes {
+
+	my ($edge_out) = @_;
+
+	my %in_degree;
+	my %graph;
+	foreach my $e (@$edge_out){
+		my ($from, $to) = @$e[0, 1];
+		$in_degree{$from} += 0;
+		$in_degree{$to} += 0;
+		$graph{$from} ||= [];
+		push @{$graph{$from}}, $to;
+		$in_degree{$to}++;
+	}
+
+	my @queue = grep { $in_degree{$_} == 0 } keys %in_degree;
+	my %reachable;
+	while(@queue){
+		my $cur = shift @queue;
+		$reachable{$cur} = 1;
+		foreach my $nb (@{$graph{$cur} || []}){
+			if(--$in_degree{$nb} == 0){
+				push @queue, $nb;
+			}
+		}
+	}
+
+	return grep { !exists $reachable{$_} } sort keys %in_degree;
 
 }
 
