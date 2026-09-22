@@ -94,22 +94,32 @@ Two running modes are supported:
 
 Mode 1: Extract gene(s)/region(s) from a pangenome graph, and visualize
     fgpb --graph <graph.og> --ref-name <ref_path> (--geneid <ID> | --geneid-list <list.file> | --region <chr:start-end> | --region-list <list.bed>) [OPTIONS]
+    Special case: with '--no-extract', the input graph is visualized as-is (e.g. an already
+    extracted subgraph), without subgraph extraction:
+    fgpb --graph <graph.og> --ref-name <ref_path> --no-extract [OPTIONS]
 
 Mode 2: Build graph from variant data, extract gene(s)/region(s), and visualize
     fgpb --variant <in.vcf> --ref-fa <ref.fa> (--geneid <ID> | --geneid-list <list.file> | --region <chr:start-end> | --region-list <list.bed>) [OPTIONS]
+
 REQUIRED ARGUMENTS
   Input mode (choose one group):
     -v, --variant       <file>          Variants in VCF format (.vcf). (requires '-r/--ref-fa')
     -r, --ref-fa        <file>          Reference genome in FASTA format (.fa). (requires '-v/--variant')
 
     -g, --graph         <file>          Variation graph in ODGI format (.og). (requires '-R/--ref-name')
-    -R, --ref-name      <string>        Name of the reference path in the graph. (requires '-g/--graph')
+    -R, --ref-name      <string>        Name of the reference path in the graph, e.g. 'P1#0#chr1' or 'P1.chr1'.
+                                        Coordinate suffixes are not accepted in extract modes; the analysis range
+                                        is given by the target parameters below. (requires '-g/--graph')
 
-  Target gene(s)/region(s):
+  Analysis target (choose one):
     --geneid            <string>        Single gene ID to analyze. (requires '-a/--gene-anno')
     --geneid-list       <file>          File containing list of gene IDs (one per line). (requires '-a/--gene-anno')
     --region            <string>        Single genomic region in 'chr:start-end' format (e.g. chr1:1000-2000).
     --region-list       <file>          BED file with genomic regions (chrom<tab>start<tab>end, 0-based).
+    --no-extract                        Visualize the input graph as-is (e.g. an already extracted subgraph),
+                                        without subgraph extraction.
+                                        (Graph mode only; '-d/-m/-e' do not apply. Gene/extra annotation tracks
+                                        require the reference path name to carry locus/coordinate information.)
 
 RECOMMENDED ARGUMENTS (DATA TRACKS)
     -a, --gene-anno     <file>          Gene annotation file in GFF3/GTF format for the reference genome.
@@ -122,10 +132,10 @@ RECOMMENDED ARGUMENTS (DATA TRACKS)
                                         'None', 'NULL', 'undefined', 'unknown' or 'Unknown'.
 
 OPTIONAL ARGUMENTS
-    -o, --out           <string>        Output file name.
+    -o, --out           <string>        Output directory name.
 
     -e, --extend        <n>             Extend analysis region by N bp upstream and downstream of genes.
-                                        Only work with --geneid or --genelist.
+                                        Only work with --geneid or --geneid-list.
                                         (Default:10)
 
     -d,                 <n>             Parameter for 'odgi extract'.
@@ -149,9 +159,11 @@ OPTIONAL ARGUMENTS
 For an already constructed graph pangenome, the following parameters are required:
 * Graph pangenome file (`--graph`)
 * Reference genome path name (`--ref-name`)
-* Target region (one of `--geneid`, `--geneid-list`, `--region`, `--region-list`)
+* Analysis target (one of `--geneid`, `--geneid-list`, `--region`, `--region-list`, or `--no-extract` for direct visualization of an already extracted subgraph)
 * Reference genome gene annotation (`--gene-anno`, optional)
 * Additional reference genome annotations (`--extra-anno`, optional)
+
+**Note on reference path naming**: `--ref-name` must resolve to exactly one path in the graph. PanSN names (`sample#hap#locus`, e.g. `P1#0#chr1`), delimiter-style names (e.g. `P1.chr1`, `chr` case-insensitive) and bare names are all accepted. In extract modes the reference path must be a full-length path carrying locus information (no `:start-end` coordinate suffix); to visualize graphs whose paths carry coordinates or lack locus information, use `--no-extract`. Auxiliary paths such as `_MINIGRAPH_...` and `Consensus_...` are ignored automatically. Sample information is read from P lines only (W lines of GFA 1.1 are not supported yet). Phenotype files are matched at the genome level, so haplotype-specific path names like `P1#0#chr1` and `P1#1#chr1` share the phenotype row of `P1`.
 
 Download demo data:
 ```bash

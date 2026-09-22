@@ -49,6 +49,7 @@ sub export_figure {
 	my %all_sample;
 	$all_sample{$_} = 1 for map { split /,/, $_->[2] } @$final_nodes;
 	my @sample_list = sort keys %all_sample;
+	my $has_haplotype = (grep { /#/ } @sample_list) ? 1 : 0;
 	my %sample_cnt;
 
 	for my $node (@$final_nodes) {
@@ -76,6 +77,7 @@ sub export_figure {
                         ref => $ref_info
                 },
 		sampleList => join(',', @sample_list),
+		haplotypeNaming => $has_haplotype,
 		dupMap => $dup_map,
                 geneAnnoData => $all_gene_pos,
                 bedAnnoData => $bed_data,
@@ -182,7 +184,7 @@ sub export_figure {
   <div class="row">
     <div id="main" style="width:100%;height:800px"></div>
   </div>
-  <p id="nodePanelText"> <small style="color: gray">Please click on the sequence blocks in the figure to view the corresponding sequence, genome list.</small> </p>
+  <p id="nodePanelText"> <small style="color: gray">Please click on the sequence blocks in the figure to view the corresponding sequence, path list.</small> </p>
   <div class="row" id="nodePanel" style="width:90%; margin:0 auto;">
     <div id="nodePanelSeq"></div>
     <div class="col-12 mb-3"></div>
@@ -202,6 +204,7 @@ $(document).ready(function () {
     const bedData = data.bedAnnoData;
     const phenoMetaData = data.phenoMeta;
     const dupMap = data.dupMap || {};
+    const sampleUnit = data.haplotypeNaming ? "haplotype" : "genome";
     const nodeData = getNodeData(graphData.node, data.sampleList);
 
     var strucColors = {
@@ -360,7 +363,7 @@ $(document).ready(function () {
         if (curNode) {
           document.getElementById("nodePanelText").hidden = true;
           document.getElementById("nodePanel").hidden = false;
-          fillNodePanel(curNode, nodeSeq, nodeSample, refInfo, dupMap);
+          fillNodePanel(curNode, nodeSeq, nodeSample, refInfo, dupMap, sampleUnit);
         }
       }
     });

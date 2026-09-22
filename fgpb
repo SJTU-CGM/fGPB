@@ -10,12 +10,15 @@ use GPBgfa;
 use GPBreport;
 use GPBpheno;
 use GPBbed;
+use GPBpath;
 
 my $usage = "\nUsage:
 Two running modes are supported:
 
 Mode 1: Extract gene(s)/region(s) from a pangenome graph, and visualize
     fgpb --graph <graph.og> --ref-name <ref_path> (--geneid <ID> | --geneid-list <list.file> | --region <chr:start-end> | --region-list <list.bed>) [OPTIONS]
+    Special case: with '--no-extract', the input graph is visualized directly (e.g. an already extracted subgraph), without subgraph extraction:
+    fgpb --graph <graph.og> --ref-name <ref_path> --no-extract [OPTIONS]
 
 Mode 2: Build graph from variant data, extract gene(s)/region(s), and visualize
     fgpb --variant <in.vcf> --ref-fa <ref.fa> (--geneid <ID> | --geneid-list <list.file> | --region <chr:start-end> | --region-list <list.bed>) [OPTIONS]
@@ -26,13 +29,18 @@ REQUIRED ARGUMENTS
     -r, --ref-fa	<file>		Reference genome in FASTA format (.fa). (requires '-v/--variant')
 
     -g, --graph		<file>		Variation graph in ODGI format (.og). (requires '-R/--ref-name')
-    -R, --ref-name	<string>	Name of the reference path in the graph. (requires '-g/--graph')
+    -R, --ref-name	<string>	Name of the reference path in the graph, e.g. 'P1#0#chr1' or 'P1.chr1'.
+    					Coordinate suffixes are not accepted in extract modes; the analysis range
+    					is given by the target parameters below. (requires '-g/--graph')
 
-  Target gene(s)/region(s):
+  Analysis target (choose one):
     --geneid		<string>	Single gene ID to analyze. (requires '-a/--gene-anno')
     --geneid-list	<file>		File containing list of gene IDs (one per line). (requires '-a/--gene-anno')
     --region		<string>	Single genomic region in 'chr:start-end' format (e.g. chr1:1000-2000).
     --region-list	<file>		BED file with genomic regions (chrom<tab>start<tab>end, 0-based).
+    --no-extract			Visualize the input graph directly, without subgraph extraction.
+    					(Graph mode only; '-d/-m/-e' do not apply. Gene/extra annotation tracks
+    					require the reference path name to carry locus/coordinate information.)
 
 RECOMMENDED ARGUMENTS (DATA TRACKS)
     -a, --gene-anno     <file>          Gene annotation file in GFF3/GTF format for the reference genome.
@@ -71,12 +79,13 @@ die $usage if @ARGV<1;
 
 my ($vcf, $reffa, $raw_graph, $refname, $anno);
 my ($geneid, $genelist, $region, $regionlist);
-my ($bed, $pheno, $out, $help);
+my ($noextract, $bed, $pheno, $out, $help);
 my $extend;
 my $threads = 1;
 my $maxd = 10000;
 my $maxe = 3;
 
+Getopt::Long::Configure("no_ignore_case");
 GetOptions(
    
    'v|variant=s'	=> \$vcf,
@@ -90,6 +99,7 @@ GetOptions(
    'geneid-list=s'	=> \$genelist,
    'region=s'		=> \$region,
    'region-list=s'	=> \$regionlist,
+   'no-extract'		=> \$noextract,
 
    'x|extra-anno=s'	=> \$bed,
    'p|pheno=s'		=> \$pheno,
@@ -109,7 +119,7 @@ print $usage and exit 0 if $help;
 my $has_vcf_mode = ($vcf || $reffa);
 my $has_graph_mode = ($raw_graph || $refname);
 
-GPBarg::check_input($vcf, $reffa, $raw_graph, $refname, $anno, $geneid, $genelist, $region, $regionlist, $extend, $bed, $pheno, $maxe, $maxd, $threads);
+GPBarg::check_input($vcf, $reffa, $raw_graph, $refname, $anno, $geneid, $genelist, $region, $regionlist, $noextract, $extend, $bed, $pheno, $maxe, $maxd, $threads);
 
 if($has_vcf_mode){
 	die "Please install 'bcftools' first\n" if(system("command -v bcftools > /dev/null 2>&1") != 0);
@@ -126,12 +136,38 @@ my $graph_dir = "graph_gfa";
 
 my $ref_path_name;
 if ($has_graph_mode) {
-	$ref_path_name = GPBarg::get_ref_path_name($raw_graph, $refname, $threads);
+	$ref_path_name = GPBarg::get_ref_path_name($raw_graph, $refname, $threads, $noextract);
 }
 
 my $interval_arr;
 my $anno_dir;
-if (defined $anno){
+my $skip_tracks = 0;
+if ($noextract) {
+	my $ref_rec = GPBpath::parse_path_name($ref_path_name);
+	my ($name, $chr, $start, $end);
+	if (defined $ref_rec->{start}) {
+		($start, $end) = GPBpath::coord_1based($ref_rec);
+		$chr = $ref_rec->{locus};
+		$name = "${chr}_${start}-${end}";
+	} elsif (defined $ref_rec->{locus}) {
+		($chr, $start, $end) = ($ref_rec->{locus}, 1, 999999999999);
+		$name = $chr;
+		warn "Warning: reference path '$ref_path_name' carries no coordinates; annotation tracks assume local coordinates equal '$chr' chromosome coordinates.\n";
+	} else {
+		($chr, $start, $end) = ($ref_rec->{raw}, 1, 999999999999);
+		$name = "whole_graph";
+		$skip_tracks = 1;
+		warn "Warning: reference path '$ref_path_name' carries no locus information; gene/extra annotation tracks will be skipped.\n" if defined $anno || defined $bed;
+	}
+	$interval_arr = [[$name, $chr, $start, $end]];
+	if (defined $anno && !$skip_tracks) {
+		printLog("Extracting gene annotation information...");
+		$anno_dir = "gene_anno";
+		mkdir "${dir_name}/$anno_dir" or die "Cannot create ${dir_name}/$anno_dir: $!\n";
+		my $format = GPBanno::detect_anno_format($anno);
+		GPBanno::extract_region_annos($anno, $interval_arr, "$dir_name/$anno_dir", $format);
+	}
+} elsif (defined $anno){
 	printLog("Extracting gene annotation information...");
 	$anno_dir = "gene_anno";
 	mkdir "${dir_name}/$anno_dir" or die "Cannot create ${dir_name}/$anno_dir: $!\n";
@@ -164,12 +200,13 @@ foreach my $interval (@$interval_arr) {
 		printLog("- Extracting subgraph with ODGI...");
 		GPBgraph::extract_subgraph($graph, $chr, "$chr:$start0-$end", $dir_name, $graph_dir, $interval->[0], $maxd, $maxe, $threads);
 		printLog("- Performing hierarchical layout of the sequence graph and computing coordinates...");
-		($node_add_sample, $edge_out, $ref_info) = GPBgfa::parse_variant_gfa("$dir_name/$graph_dir/$name.gfa", "$dir_name/variant_samples.txt", "$dir_name/pan.vcf");
+		($node_add_sample, $edge_out, $ref_info) = GPBgfa::parse_variant_gfa("$dir_name/$graph_dir/$name.gfa", "$dir_name/variant_samples.txt", "$dir_name/pan.vcf", $chr);
 		$dup_map = {};
 	} elsif ($has_graph_mode) {
 		if ($geneid || $genelist || $region || $regionlist) {
 			printLog("- Extracting subgraph with ODGI...");
-			$ref_path_name =~ /\Q$chr\E/ or die "Error: The query chromosome is not found in the reference path of the pangenome graph. Please verify that the input pangenome graph and the query gene/region correspond to the same chromosome.\n";
+			my $ref_locus = GPBpath::parse_path_name($ref_path_name)->{locus};
+			(defined $ref_locus && $ref_locus eq $chr) or die "Error: The query chromosome '$chr' does not match the locus of the reference path '$ref_path_name'. Please verify that the input pangenome graph and the query gene/region correspond to the same chromosome.\n";
 			GPBgraph::extract_subgraph($graph, $ref_path_name, "$ref_path_name:$start0-$end", $dir_name, $graph_dir, $name, $maxd, $maxe, $threads);
 		} else {
 			GPBgraph::process_graph($graph, $ref_path_name, $dir_name, $graph_dir, $name, $threads);
@@ -194,7 +231,7 @@ foreach my $interval (@$interval_arr) {
 	}
 
         my $bed_data;
-        if (defined $bed){
+        if (defined $bed && !$skip_tracks){
                 printLog("- Adding additional annotation track...");
                 $bed_data = GPBbed::load_bed($bed, $interval);
         } else {

@@ -16,7 +16,7 @@ sub get_interval {
                         @genes = ($geneid);
                 } else {
                         open my $fh, '<', $genelist or die $!;
-                        @genes = map { chomp; $_ } grep { !/^#/ && /\S/ } <$fh>;
+                        @genes = map { s/\r?\n$//; $_ } grep { !/^#/ && /\S/ } <$fh>;
                         close $fh;
                         die "Error: No valid gene IDs found in $genelist\n" unless @genes;
                 }
@@ -36,7 +36,7 @@ sub get_interval {
                         my %seen_region;
                         @regions = ();
                         while (<$fh>) {
-                                chomp;
+                                s/\r?\n$//;
                                 next if /^#/ || /^\s*$/;
                                 my @f = split(/\t/);
                                 next unless @f >= 3;
@@ -214,7 +214,7 @@ sub extract_gene_annos {
 		open my $f2, '<', $anno or die "Error: Cannot open $anno: $!";
                 while (<$f2>) {
                         next if /^#/ || /^$/;
-                        chomp;
+                        s/\r?\n$//;
                         my @cols = split /\t/, $_, 9;
                         next if @cols < 9;
                         my ($chr, $s, $e, $attr) = @cols[0, 3, 4, 8];
@@ -371,7 +371,7 @@ sub find_gene_anno {
 	if ($format eq 'gtf') {
 		while (<$fh>) {
 			next if substr($_, 0, 1) eq '#' || /^\s*$/;
-			chomp;
+			s/\r?\n$//;
 			my @f = split /\t/, $_, 9;
 			next unless @f >= 9;
 			my ($type, $attr) = @f[2,8];
@@ -398,7 +398,7 @@ sub find_gene_anno {
 	} else {
 		while (<$fh>) {
 			next if substr($_, 0, 1) eq '#' || /^\s*$/;
-			chomp;
+			s/\r?\n$//;
 			my @f = split /\t/, $_, 9;
 			next unless @f >= 9;
 			my ($type, $attr) = @f[2,8];
@@ -425,7 +425,7 @@ sub find_gene_anno {
 		seek $fh, 0, 0;
 		while (<$fh>) {
 			next if substr($_, 0, 1) eq '#' || /^\s*$/;
-			chomp;
+			s/\r?\n$//;
 			my @f = split /\t/, $_, 9;
 			next unless @f >= 9;
 			my ($type, $attr) = @f[2,8];
@@ -479,7 +479,7 @@ sub get_gene_pos {
 	my @rec;
 	if ($format eq 'gff') {
 		while (<$fh>) {
-			chomp;
+			s/\r?\n$//;
 			next if /^#/;
 			next if /^\s*$/;
 			my @f = split /\t/;
@@ -498,7 +498,7 @@ sub get_gene_pos {
 	} else {
 		my %gene_info;
 		while (<$fh>) {
-			chomp;
+			s/\r?\n$//;
 			next if /^#/;
 			next if /^\s*$/;
 			my @f = split /\t/;

@@ -4,6 +4,7 @@ package GPBgfa;
 
 use strict;
 use warnings;
+use GPBpath;
 
 sub parse_graph_gfa {
 	
@@ -17,20 +18,29 @@ sub parse_graph_gfa {
 	my %node_seq;
 	my %dup_map;
 	my $max_id = 0;
+	my @excluded_paths;
+	my @p_names;
+	my %warned_raw;
 
 	push(@nodes, ["0+", ""]);
 	push(@nodes, ["Inf+", ""]);
 
 	open my $fh_gfa, '<', $gfa_file or die "Error: Can't open file '$gfa_file': $!\n";
         while(<$fh_gfa>){
-                chomp $_;
+                s/\r?\n$//;
+                s/\r//g;
                 my @arr = split(/\t/, $_);
                 my $class = $arr[0];
                 if($class eq "S"){
 			push(@nodes, [$arr[1]."+", $arr[2]]);
 			$node_seq{$arr[1]} = $arr[2];
 			$max_id = $arr[1] if $arr[1] =~ /^\d+$/ && $arr[1] > $max_id;
-                }elsif($class eq "P" && !($arr[1] =~ /_MINIGRAPH_/)){
+                }elsif($class eq "P"){
+                        if ($arr[1] =~ /_MINIGRAPH_|^Consensus_/) {
+                                push @excluded_paths, $arr[1];
+                                next;
+                        }
+                        push @p_names, $arr[1];
                         my @cur_nodes = split(/,/, $arr[2]);
                         my %seen_in_path;
                         for(my $i = 0; $i < @cur_nodes; $i++){
@@ -60,32 +70,62 @@ sub parse_graph_gfa {
                                 }
 
                         }
-                        foreach my $node (@cur_nodes){
-                                if ($arr[1] =~ /^([^#]+)#+/ || $arr[1] =~ /^(.*?)(?=\.[cC]hr)/) {
-                                        if(exists $node_sample{$node}){
-                                                $node_sample{$node} .= ",$1";
-                                        }else{
-                                                $node_sample{$node} = $1;
-                                        }
+                        my $sample_name;
+                        if ($arr[1] =~ /^([^#]+)#([^#]+)#/) {
+                                $sample_name = "$1#$2";
+                        }elsif ($arr[1] =~ /^([^#]+)#+/ || $arr[1] =~ /^(.*?)(?=\.(?i:chr))/) {
+                                $sample_name = $1;
+                        }else{
+                                $sample_name = $arr[1];
+                                if (!$warned_raw{$arr[1]}++) {
+                                        warn "Warning: cannot extract sample name from path name '$arr[1]'; using the full path name as its sample.\n";
                                 }
                         }
-                        if($arr[1] =~ /(\Q$refname\E\w*):(\d+)-(\d+)/){
-                                 $ref_info{chr} = $1;
-                                 $ref_info{start} = $2 + 1;
-                                 $ref_info{end} = $3;
+                        foreach my $node (@cur_nodes){
+                                if(exists $node_sample{$node}){
+                                        $node_sample{$node} .= ",$sample_name";
+                                }else{
+                                        $node_sample{$node} = $sample_name;
+                                }
+                        }
+                        if($arr[1] =~ /^\Q$refname\E:(\d+)-(\d+)$/){
+                                 die "Error: multiple paths match the resolved reference name '$refname' in '$gfa_file'\n" if $ref_info{nodes};
+                                 $ref_info{chr} = $refname;
+                                 $ref_info{start} = $1 + 1;
+                                 $ref_info{end} = $2;
                                  $ref_info{nodes} = $arr[2];
                         } elsif ($arr[1] eq $refname) {
-				if ($arr[1] =~ /(\w+):(\d+)-(\d+)/) {
-					$ref_info{chr} = $1;
-					$ref_info{start} = $2 + 1;
-					$ref_info{end} = $3;
-					$ref_info{nodes} = $arr[2];
-				}
-			}
+                                 die "Error: multiple paths match the resolved reference name '$refname' in '$gfa_file'\n" if $ref_info{nodes};
+                                 $ref_info{chr} = $refname;
+                                 $ref_info{nodes} = $arr[2];
+                                 my $ref_rec = GPBpath::parse_path_name($arr[1]);
+                                 if (defined $ref_rec->{start}) {
+                                         ($ref_info{start}, $ref_info{end}) = GPBpath::coord_1based($ref_rec);
+                                 }
+                        }
                 }
         }
 
         close $fh_gfa;
+
+	if (!$ref_info{nodes}) {
+		my $msg = "Error: no path matches the resolved reference name '$refname' in '$gfa_file'.\n  Available paths: " . join(", ", @p_names) . "\n";
+		$msg .= "  Note: these path(s) were excluded as auxiliary: " . join(", ", @excluded_paths) . "\n" if @excluded_paths;
+		die $msg;
+	}
+	if (!defined $ref_info{start}) {
+		my $ref_len = 0;
+		foreach my $n (split(/,/, $ref_info{nodes})) {
+			(my $b = $n) =~ s/[+-]$//;
+			$ref_len += length($node_seq{$b} // '');
+		}
+		($ref_info{start}, $ref_info{end}) = (1, $ref_len);
+		warn "Warning: reference path '$refname' carries no coordinates; displaying 1-$ref_len as local coordinates.\n";
+	}
+
+	if (@excluded_paths) {
+		warn "Info: excluded " . scalar(@excluded_paths) . " auxiliary path(s) matching '_MINIGRAPH_' or '^Consensus_': " . join(", ", @excluded_paths) . "\n";
+	}
 
 	$node_sample{"0+"} = "";
 	$node_sample{"Inf+"} = "";
@@ -151,7 +191,7 @@ sub detect_cycle_nodes {
 
 sub parse_variant_gfa {
 
-	my ($gfa_file,  $sample_table_file, $vcf_file) = @_;
+	my ($gfa_file,  $sample_table_file, $vcf_file, $chr) = @_;
 
 	chomp(my $line = `awk '/^#CHROM/{print; exit}' $vcf_file`);
 	 my @h = split /\t/, $line;
@@ -162,7 +202,7 @@ sub parse_variant_gfa {
 	if(defined $sample_table_file && -s $sample_table_file){
 		open my $st, '<', $sample_table_file or die "Error: Can't open file '$sample_table_file': $!\n";
 		while(<$st>){
-			chomp;
+			s/\r?\n$//;
 			my ($id, $samples) = split /\t/, $_, 2;
 			$id2samples{$id} = [split /,/, $samples];
 		}
@@ -183,7 +223,8 @@ sub parse_variant_gfa {
         push(@nodes, ["Inf+", ""]);
 
         while(<$gfa>){
-                chomp($_);
+                s/\r?\n$//;
+                s/\r//g;
                 my @arr = split(/\t/, $_);
                 my $class = $arr[0];
                 if($class eq "S"){
@@ -196,10 +237,11 @@ sub parse_variant_gfa {
                         my $cur_path = $arr[1];
                         my $cur_nodes = $arr[2];
                         my @cur_node_arr = split(/,/, $cur_nodes);
-                        if($cur_path =~ /^([Cc]hr\w+):(\d+)-(\d+)$/){
-                                $ref_info{chr} = $1;
-                                $ref_info{start} = $2 + 1;
-                                $ref_info{end} = $3;
+                        if($cur_path =~ /^\Q$chr\E:(\d+)-(\d+)$/){
+                                die "Error: multiple paths match the reference name '$chr' in '$gfa_file'\n" if $ref_info{nodes};
+                                $ref_info{chr} = $chr;
+                                $ref_info{start} = $1 + 1;
+                                $ref_info{end} = $2;
                                 $ref_info{nodes} = $cur_nodes;
                                 @ref_nodes = @cur_node_arr;
                         }elsif($cur_path =~ /_alt_(ID\d+-\d+)_(\d+):(\d+)-(\d+)/){
@@ -208,6 +250,10 @@ sub parse_variant_gfa {
                 }
 
         }
+
+	if (!$ref_info{nodes}) {
+		die "Error: no path matches the reference name '$chr' in '$gfa_file'; the extracted subgraph is expected to contain a '$chr:start-end' reference path\n";
+	}
 
 	foreach my $e (@edges){
                 my @e = @$e;

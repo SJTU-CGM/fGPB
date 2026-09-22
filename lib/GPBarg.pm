@@ -4,10 +4,11 @@ package GPBarg;
 
 use strict;
 use warnings;
+use GPBpath;
 
 
 sub check_input {
-	my ($vcf, $reffa, $graph, $refname, $anno, $geneid, $genelist, $region, $regionlist, $extend, $bed, $pheno, $maxe, $maxd, $threads) = @_;
+	my ($vcf, $reffa, $graph, $refname, $anno, $geneid, $genelist, $region, $regionlist, $noextract, $extend, $bed, $pheno, $maxe, $maxd, $threads) = @_;
 
 	my $has_vcf_mode = ($vcf || $reffa);
 	my $has_graph_mode = ($graph || $refname);
@@ -23,19 +24,22 @@ sub check_input {
         	die "Error: --graph is required when using --ref-name\n" if $refname && !$graph;
 	}
 
+	die "Error: --no-extract is only available in Graph mode (--graph/--ref-name)\n" if $noextract && $has_vcf_mode;
+
 	if((defined $geneid || defined $genelist) && !defined $anno){
 		die "Error: Please provide the GFF/GTF file with gene annotation\n";
 	}
 
-	my @range_options = ($geneid, $genelist, $region, $regionlist);
+	my @range_options = ($geneid, $genelist, $region, $regionlist, $noextract);
 	my $range_count = scalar grep { defined $_ } @range_options;
 	if ($range_count == 0){
-		die "Error: Please specify one analysis range parameter: --geneid, --geneid-list, --region, or --region-list\n";
+		die "Error: Please specify one analysis target parameter: --geneid, --geneid-list, --region, --region-list, or --no-extract\n";
 	}elsif ($range_count > 1) {
-		die "Error: Can only specify one analysis range parameter: --geneid, --geneid-list, --region, or --region-list\n";
+		die "Error: Can only specify one analysis target parameter: --geneid, --geneid-list, --region, --region-list, or --no-extract\n";
 	}
 
 	if (defined $extend && !$geneid && !$genelist) {
+		die "Error: --extend parameter can only be used with --geneid or --geneid-list\n" if $noextract;
     		warn "Warning: --extend parameter can only be used with --geneid or --geneid-list\n";
 	}
 
@@ -159,7 +163,7 @@ sub validate_anno_file {
     while (<$fh>) {
     	next if /^#/ || /^\s*$/;
 	$line_num++;
-	chomp;
+	s/\r?\n$//;
 
 	my @cols = split /\t/, $_, -1;
 	die "Line $line_num: expected 9 columns, got " . scalar(@cols) . "\n" if @cols != 9;
@@ -225,7 +229,7 @@ sub validate_phenotype_file {
         open my $fh, '<', $file or die "Error: Can't open file '$file': $!\n";
 
         my $header = <$fh>;
-        chomp $header;
+        $header =~ s/\r?\n$//;
         my @headers = split(/\t/, $header);
 
         if (scalar @headers < 2) {
@@ -236,7 +240,7 @@ sub validate_phenotype_file {
         my %path_names;
         while (my $line = <$fh>) {
                 $line_num++;
-                chomp $line;
+                $line =~ s/\r?\n$//;
 		next if $line =~ /^#/;
                 next if $line =~ /^\s*$/;
                 my @fields = split(/\t/, $line);
@@ -259,7 +263,7 @@ sub validate_phenotype_file {
 
 
 sub get_ref_path_name {
-	my ($og_file, $refname, $thread) = @_;
+	my ($og_file, $refname, $thread, $noextract) = @_;
 	
 	my $cmd = "odgi paths -i '$og_file' -L --threads $thread";
 	my $output = `$cmd`;
@@ -268,21 +272,20 @@ sub get_ref_path_name {
 		die "Error: Failed to execute 'odgi paths -i $og_file -L'\n";
 	}
 
-	my @all_paths = split /\n/, $output;
-	my @matched = grep { index($_, $refname) != -1 } @all_paths;
-	unless (@matched) {
-		die "Error: No path found matching refname '$refname' in file '$og_file'\n";
+	my $q = GPBpath::parse_path_name($refname);
+	if (!$noextract && defined $q->{start}) {
+		die "Error: --ref-name accepts a path name only, not a coordinate suffix ('$refname'). Specify the analysis range with --geneid/--geneid-list/--region/--region-list instead.\n";
 	}
 
-	if (@matched > 1) {
-		die "Error: Multiple paths found matching refname '$refname' in file '$og_file': " . join(", ", @matched) . "\n";
-	}
+	my @all_paths = split /\n/, $output;
+	my %opts = $noextract ? () : (forbid_coords => 1, require_locus => 1);
+	my $ref = GPBpath::resolve_ref_path($refname, \@all_paths, \%opts);
 
 	if (@all_paths <= 1) {
 		die "Error: Only the reference genome path found. Please provide a pangenome graph containing multiple genome paths.\n"; 
 	}
 
-	return $matched[0];
+	return $ref->{raw};
 }
 
 

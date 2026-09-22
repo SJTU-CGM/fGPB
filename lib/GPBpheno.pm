@@ -7,15 +7,25 @@ use warnings;
 use List::Util qw(first);
 
 
+sub _sample_key {
+	my ($name) = @_;
+	return $1 if $name =~ /^([^#]+)#+/;
+	return $1 if $name =~ /^(.*?)(?=\.(?i:chr))/;
+	return $name;
+}
+
+
 sub load_pheno {
 	my ($pheno_file, $nodes, $MISSING_RE) = @_;
 	
 	my %node_sample;
 	$node_sample{$_} = 1 for split /,/, join ',', map{ $_->[2] } grep { defined $_->[2] && $_->[2] ne '' } @$nodes;
+	my @ks = keys %node_sample;
+	$node_sample{_sample_key($_)} = 1 for @ks;
 
 	open my $fh_ph, '<', $pheno_file or die "Error: Can't open file '$pheno_file': $!\n";
 	my $header = <$fh_ph>;
-	chomp $header;
+	$header =~ s/\r?\n$//;
 	my @pname = split /\t/, $header;
 	$_ =~ s/^"|"$//g for @pname;
 	shift @pname;
@@ -23,7 +33,7 @@ sub load_pheno {
 	my %is_cont = map { $_ => 1 } @pname;
 	my (%phen, %level_list);
 	while (<$fh_ph>) {
-		chomp $_;
+		s/\r?\n$//;
 		next if /^#/;
 		next if /^\s*$/;
 		my @arr = split /\t/;
@@ -47,7 +57,7 @@ sub load_pheno {
 
 	<$fh_ph>; 
 	while (<$fh_ph>) {
-		chomp;
+		s/\r?\n$//;
 		next if /^#/;
 		next if /^\s*$/;
 		my @arr = split /\t/;
@@ -96,12 +106,12 @@ sub add_pheno {
 			}
 		}
 
-		my @uniq_samples = grep { !$seen{$_}++ } @samples;
+		my @uniq_samples = grep { !$seen{_sample_key($_)}++ } @samples;
 
 		foreach my $s (@uniq_samples) {
 			foreach my $i (0..$#$pheno_meta) {
 				my ($pheno_name, $cont, $levels) = @{$pheno_meta->[$i]};
-				my $val = $pheno_data->{$s}{$pheno_name};
+				my $val = $pheno_data->{$s}{$pheno_name} // $pheno_data->{_sample_key($s)}{$pheno_name};
 				if (!defined $val || $val eq '' || $val =~ $MISSING_RE) {
 					$sta_uniq[$i][0]++;
 					next;

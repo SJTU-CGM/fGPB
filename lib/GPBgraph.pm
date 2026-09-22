@@ -136,9 +136,37 @@ sub build_graph {
 }
 
 
+sub sanitize_gfa {
+	my ($rawgraph, $dir_name) = @_;
+	return $rawgraph unless -T $rawgraph;
+	open my $in_gfa, '<', $rawgraph or die "Error: Can't open file '$rawgraph': $!\n";
+	open my $out_gfa, '>', "${dir_name}/input.sanitized.gfa" or die "Error: Can't write file '${dir_name}/input.sanitized.gfa': $!\n";
+	while (<$in_gfa>) {
+		s/\r//g;
+		print $out_gfa $_;
+	}
+	close $in_gfa;
+	close $out_gfa;
+	return "${dir_name}/input.sanitized.gfa";
+}
+
+
 sub sort_graph {
 	my ($rawgraph, $dir_name, $pan_name, $threads) = @_;
+	$rawgraph = sanitize_gfa($rawgraph, $dir_name);
 	system("odgi sort -i $rawgraph -o ${dir_name}/$pan_name -O --threads $threads");
+	return;
+}
+
+
+sub prepare_graph {
+	my ($rawgraph, $dir_name, $pan_name, $threads) = @_;
+	if (-T $rawgraph) {
+		$rawgraph = sanitize_gfa($rawgraph, $dir_name);
+		system("odgi build -g $rawgraph -o ${dir_name}/$pan_name --threads $threads") == 0 or die "Error: Failed to construct the sequence graph using ODGI.\n";
+	} else {
+		system("cp $rawgraph ${dir_name}/$pan_name") == 0 or die "Error: Failed to copy the input graph file.\n";
+	}
 	return;
 }
 
@@ -149,10 +177,9 @@ sub extract_subgraph {
 
 	system("odgi extract -i $graph -r $pos -E -P -d $maxd -e $maxe -o $dir_name/${pref}_raw.og --threads $thread") == 0 or die "Error: Failed to extract subgraph using 'odgi extract'.\n";
         system("odgi normalize -i $dir_name/${pref}_raw.og -o $dir_name/${pref}_norm.og --threads $thread -P") == 0 or die "Error: Failed to compact unitigs and simplify redundant furcations using 'odgi normalize'.\n";
-        system("odgi paths -i $dir_name/${pref}_norm.og -L --threads $thread -P | grep $refname > $dir_name/${pref}.refpath") == 0 or die "Error: Failed to interrogate reference path using 'odgi paths'.\n";
+        system("odgi paths -i $dir_name/${pref}_norm.og -L --threads $thread -P | grep -F -- '$refname:' > $dir_name/${pref}.refpath") == 0 or die "Error: Failed to interrogate reference path using 'odgi paths'.\n";
         system("odgi groom -i $dir_name/${pref}_norm.og -R $dir_name/${pref}.refpath -o $dir_name/${pref}.og --threads $thread -P") == 0 or die "Error: Failed to harmonize node orientations of reference path using 'odgi groom'.\n";
         system("odgi view -i $dir_name/${pref}.og -g --threads $thread > $dir_name/$graph_dir/${pref}.gfa") == 0 or die "Error: Failed to output the GFA file using 'odgi view'.\n";
-
 	unlink "$dir_name/${pref}_raw.og" if -e "$dir_name/${pref}_raw.og";
 	unlink "$dir_name/${pref}_norm.og" if -e "$dir_name/${pref}_norm.og";
 	unlink "$dir_name/${pref}.refpath" if -e "$dir_name/${pref}.refpath";
@@ -164,13 +191,11 @@ sub extract_subgraph {
 sub process_graph {
 	my ($graph, $refname, $dir_name, $graph_dir, $pref,  $thread) = @_;
 
-	system("odgi normalize -i $graph -o $dir_name/${pref}_norm.og --threads $thread -P") == 0 or die "Error: Failed to compact unitigs and simplify redundant furcations using 'odgi normalize'.\n";
-	system("odgi paths -i $dir_name/${pref}_norm.og -L --threads $thread -P | grep $refname > $dir_name/${pref}.refpath") == 0 or die "Error: Failed to interrogate reference path using 'odgi paths'.\n";
-        system("odgi groom -i $dir_name/${pref}_norm.og -R $dir_name/${pref}.refpath -o $dir_name/${pref}.og --threads $thread -P") == 0 or die "Error: Failed to harmonize node orientations of reference path using 'odgi groom'.\n";
-        system("odgi view -i $dir_name/${pref}.og -g --threads $thread> $dir_name/$graph_dir/${pref}.gfa") == 0 or die "Error: Failed to output the GFA file using 'odgi view'.\n";
+	system("odgi paths -i $graph -L --threads $thread -P | grep -Fx -- '$refname' > $dir_name/${pref}.refpath") == 0 or die "Error: Failed to interrogate reference path using 'odgi paths'.\n";
+        system("odgi groom -i $graph -R $dir_name/${pref}.refpath -o $dir_name/${pref}.og --threads $thread -P") == 0 or die "Error: Failed to harmonize node orientations of reference path using 'odgi groom'.\n";
+        system("odgi view -i $dir_name/${pref}.og -g --threads $thread > $dir_name/$graph_dir/${pref}.gfa") == 0 or die "Error: Failed to output the GFA file using 'odgi view'.\n";
 
-	unlink "$dir_name/${pref}_norm.og" if -e "$dir_name/${pref}_norm.og";
-        unlink "$dir_name/${pref}.refpath" if -e "$dir_name/${pref}.refpath";
+	unlink "$dir_name/${pref}.refpath" if -e "$dir_name/${pref}.refpath";
         unlink "$dir_name/${pref}.og" if -e "$dir_name/${pref}.og";
 }
 

@@ -1348,7 +1348,7 @@ function getChartOption(axisPointerColor, xMin, xMax, newXLabel, yMax, strucYtex
 }
 
 
-function fillNodePanel(curNode, nodeSeq, nodeSample, refInfo, dupMap) {
+function fillNodePanel(curNode, nodeSeq, nodeSample, refInfo, dupMap, sampleUnit) {
 	const fileName = refInfo.chr + '_' + refInfo.start + '-' + refInfo.end
 	
   const seq = nodeSeq.get(curNode) || '';
@@ -1372,8 +1372,8 @@ function fillNodePanel(curNode, nodeSeq, nodeSample, refInfo, dupMap) {
   const textList = uniqueGenomes.map(g => countMap[g] > 1 ? `${g}(${countMap[g]})` : g);
   document.getElementById("nodePanelSample").innerHTML =
     `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
-      <b>Detected ${curSampleAll.length} path(s) from ${uniqueGenomes.length} genome(s):</b>
-      <button class="btn btn-sm btn-success" onclick="downloadNodeCsv('${curNode}', '${uniqueGenomes.join(',')}', '${uniqueGenomes.map(g => countMap[g]).join(',')}', '${fileName}')" style="font-size:12px;padding:2px 10px;">
+      <b>Detected ${curSampleAll.length} path(s) from ${uniqueGenomes.length} ${sampleUnit}(s):</b>
+      <button class="btn btn-sm btn-success" onclick="downloadNodeCsv('${curNode}', '${uniqueGenomes.join(',')}', '${uniqueGenomes.map(g => countMap[g]).join(',')}', '${fileName}', '${sampleUnit}')" style="font-size:12px;padding:2px 10px;">
         <span style="margin-right:4px;">⬇</span>Download CSV
       </button>
     </div>`
@@ -1399,10 +1399,10 @@ function downloadFasta(nodeId, sequence, fileName) {
 }
 
 
-function downloadNodeCsv(nodeId, genomesStr, countsStr, fileName) {
+function downloadNodeCsv(nodeId, genomesStr, countsStr, fileName, unit) {
   const genomes = genomesStr.split(',');
   const counts = countsStr.split(',').map(Number);
-  let csvContent = 'Genome,Count\n';
+  let csvContent = `${unit.charAt(0).toUpperCase() + unit.slice(1)},Count\n`;
   genomes.forEach((g, i) => {
     csvContent += `${g},${counts[i]}\n`;
   });
@@ -1412,7 +1412,7 @@ function downloadNodeCsv(nodeId, genomesStr, countsStr, fileName) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `${fileName}_node${nodeId}_genomes.csv`;
+  a.download = `${fileName}_node${nodeId}_${unit}s.csv`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
